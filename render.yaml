@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: vc-joiner-bot
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: OWNER_IDS
+        sync: false
+      - key: DB_NAME
+        value: vcjoiner
+      - key: SESSIONS_DIR
+        value: /data/sessions
+    disk:
+      name: sessions-disk
+      mountPath: /data
+      sizeGB: 1

@@ -1,0 +1,642 @@
+import asyncio
+import os
+import hashlib
+from pyrogram import Client, filters
+from pyrogram.types import (
+    Message,
+    ReplyKeyboardMarkup,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardRemove,
+)
+from config import API_ID, API_HASH, BOT_TOKEN, OWNER_IDS, SESSIONS_DIR
+import database as db
+import vcmanager
+
+bot = Client(
+    "vcjoiner_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    workdir=SESSIONS_DIR,
+)
+
+conv: dict[int, str] = {}
+phone_state: dict[int, dict] = {}
+acct_select: dict[int, str] = {}
+
+BOT_USERNAME = ""
+
+
+def is_owner(_, __, m: Message) -> bool:
+    return bool(m.from_user and m.from_user.id in OWNER_IDS)
+
+
+async def is_allowed_user(user_id: int) -> bool:
+    return user_id in OWNER_IDS or await db.is_allowed(user_id)
+
+
+# ---------------- Menus ----------------
+
+def main_menu():
+    return ReplyKeyboardMarkup(
+        [
+            ["➕ Add String", "➕ Add Login"],
+            ["📋 Accounts", "🎯 Targets"],
+            ["▶️ Start All VC", "⏹️ Stop All VC"],
+            ["🤖 Auto Join: ON", "🎯 Control Account"],
+            ["📊 Status", "📚 Tutorial", "👤 Users"],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def main_menu_off():
+    return ReplyKeyboardMarkup(
+        [
+            ["➕ Add String", "➕ Add Login"],
+            ["📋 Accounts", "🎯 Targets"],
+            ["▶️ Start All VC", "⏹️ Stop All VC"],
+            ["🤖 Auto Join: OFF", "🎯 Control Account"],
+            ["📊 Status", "📚 Tutorial", "👤 Users"],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def acct_kb(sessions: list):
+    rows = []
+    for s in sessions:
+        rows.append([InlineKeyboardButton(f"👤 {s}", callback_data=f"acct:{s}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def acct_action_kb(name: str):
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("▶️ Join VC", callback_data=f"ajoin:{name}"),
+                InlineKeyboardButton("⏹️ Leave VC", callback_data=f"aleave:{name}"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Restart", callback_data=f"arestart:{name}"),
+                InlineKeyboardButton("🗑 Delete", callback_data=f"adelete:{name}"),
+            ],
+            [InlineKeyboardButton("⬅️ Back", callback_data="back_acct")],
+        ]
+    )
+
+
+def target_kb(targets: list):
+    rows = []
+    for t in targets:
+        title = t.get("title", str(t["chat_id"]))[:30]
+        rows.append(
+            [InlineKeyboardButton(f"🎯 {title}", callback_data=f"tdel:{t['chat_id']}")]
+        )
+    return InlineKeyboardMarkup(rows)
+
+
+# ---------------- Core handlers ----------------
+
+@bot.on_message(filters.command("start"))
+async def start_cmd(_, m: Message):
+    uid = m.from_user.id
+    allowed = await is_allowed_user(uid)
+    if uid in OWNER_IDS:
+        role = "🛡️ **Owner**"
+    elif allowed:
+        role = "✅ **Authorized User**"
+    else:
+        await m.reply(
+            "🚫 You are **not authorized** to use this bot.\nContact the owner.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+    await m.reply(
+        f"**VC Joiner Bot**\n\n"
+        f"Welcome back! Role: {role}\n\n"
+        f"• Add accounts via string or login\n"
+        f"• Add target groups/channels\n"
+        f"• Start VC join — accounts sit muted\n"
+        f"• Auto-join re-enters calls if they end\n\n"
+        f"Use the menu below 👇",
+        reply_markup=main_menu(),
+    )
+
+
+@bot.on_message(filters.command("help"))
+async def help_cmd(_, m: Message):
+    if not await is_allowed_user(m.from_user.id):
+        return
+    await _help_text(m)
+
+
+async def _help_text(m: Message):
+    await m.reply(
+        "**VC Joiner — Commands**\n\n"
+        "/start — Open menu\n"
+        "/adduser <id> — Add authorized user (owner)\n"
+        "/deluser <id> — Remove user (owner)\n"
+        "/delacc <name> — Delete an account\n"
+        "/deltarget <id> — Delete a target\n"
+        "/status — Bot health & stats\n"
+        "/health — Same as status\n"
+        "/help — This message\n\n"
+        "**Menu buttons** let you do everything without commands."
+    )
+
+
+@bot.on_message(filters.command("health"))
+async def health_cmd(_, m: Message):
+    if not await is_allowed_user(m.from_user.id):
+        return
+    await _status_text(m)
+
+
+@bot.on_message(filters.command("status"))
+async def status_cmd(_, m: Message):
+    if not await is_allowed_user(m.from_user.id):
+        return
+    await _status_text(m)
+
+
+async def _status_text(m: Message):
+    sessions = await db.list_sessions()
+    targets = await db.list_targets()
+    active = vcmanager.active_accounts()
+    users = [u async for u in db.list_users()]
+    auto = "ON ✅" if vcmanager.auto_rejoin_enabled() else "OFF ❌"
+    dead = vcmanager.dead_accounts()
+    text = (
+        f"**📊 Bot Health**\n\n"
+        f"**Accounts saved:** {len(sessions)}\n"
+        f"**Accounts active:** {len(active)}\n"
+        f"**Dead sessions:** {len(dead)}\n"
+        f"**Targets:** {len(targets)}\n"
+        f"**Authorized users:** {len(users)}\n"
+        f"**Auto-rejoin:** {auto}\n\n"
+    )
+    if active:
+        text += "**Active:**\n" + "\n".join(f"• `{a}`" for a in active) + "\n"
+    if dead:
+        text += "\n**⚠️ Dead (need re-login):**\n" + "\n".join(f"• `{a}`" for a in dead)
+    if not active and not dead:
+        text += "No accounts."
+    await m.reply(text)
+
+
+# ---------------- Keyboard routing ----------------
+
+@bot.on_message(filters.private & filters.text, group=1)
+async def menu_router(client: Client, m: Message):
+    uid = m.from_user.id
+    if not await is_allowed_user(uid):
+        return
+    text = m.text.strip()
+
+    if text == "/cancel":
+        conv.pop(uid, None)
+        phone_state.pop(uid, None)
+        acct_select.pop(uid, None)
+        await m.reply("Cancelled.", reply_markup=main_menu())
+        return
+
+    if text == "➕ Add String":
+        await m.reply(
+            "Send the **String Session**.\n"
+            "Generate one with @StringSessionGen_Bot or similar.\n\n"
+            "Send /cancel to abort."
+        )
+        conv[uid] = "await_string"
+
+    elif text == "➕ Add Login":
+        await m.reply(
+            "Send the **phone number** with country code.\nExample: `+919876543210`\n\nSend /cancel to abort."
+        )
+        conv[uid] = "await_phone"
+
+    elif text == "📋 Accounts":
+        sessions = await db.list_sessions()
+        if not sessions:
+            await m.reply("No accounts yet. Add one with the menu.")
+            return
+        lines = []
+        for s in sessions:
+            if s in vcmanager._dead:
+                status = "❌"
+            elif s in vcmanager._clients:
+                status = "🟢"
+            else:
+                status = "⚪"
+            lines.append(f"{status} `{s}`")
+        await m.reply("**Your Accounts:**\n" + "\n".join(lines))
+
+    elif text == "🎯 Targets":
+        targets = await db.list_targets()
+        if not targets:
+            await m.reply("No targets yet. Use **Add Target GC** button.")
+            return
+        lines = []
+        for t in targets:
+            title = t.get("title", str(t["chat_id"]))[:40]
+            lines.append(f"• **{title}**\n  `{t['chat_id']}`")
+        await m.reply("**Target Chats:**\n" + "\n".join(lines))
+
+    elif text in ("➕ Add Target GC",):
+        await m.reply(
+            "Send the **target link or chat ID**.\n\n"
+            "Examples:\n`https://t.me/xxxxx`\n`-1001234567890`\n\nSend /cancel to abort."
+        )
+        conv[uid] = "await_target"
+
+    elif text == "▶️ Start All VC":
+        sessions = await db.list_sessions()
+        targets = await db.list_targets()
+        if not sessions:
+            await m.reply("Add at least one account first.")
+            return
+        if not targets:
+            await m.reply("Add at least one target first.")
+            return
+        msg = await m.reply("⏳ Starting accounts and joining voice chats...")
+        total = 0
+        failed_accounts = []
+        for i, s in enumerate(sessions, 1):
+            await msg.edit(
+                f"⏳ Joining...\nAccount {i}/{len(sessions)}: `{s}`"
+            )
+            res = await vcmanager.join_all_targets(s, targets)
+            ok_count = sum(1 for v in res.values() if v)
+            total += ok_count
+            if ok_count == 0:
+                failed_accounts.append(s)
+            await asyncio.sleep(2.5)  # stagger to avoid flood
+        await vcmanager.start_rejoin_loop()
+        report = (
+            f"✅ **VC Join complete**\n"
+            f"Accounts: {len(sessions)}\n"
+            f"Targets: {len(targets)}\n"
+            f"Successful joins: {total}\n"
+        )
+        if failed_accounts:
+            report += f"⚠️ Failed: {', '.join(f'`{a}`' for a in failed_accounts)}"
+        await msg.edit(report)
+
+    elif text == "⏹️ Stop All VC":
+        await vcmanager.stop_all()
+        await m.reply("⏹️ All accounts stopped and left voice chats.")
+
+    elif text in ("🤖 Auto Join: ON", "🤖 Auto Join: OFF"):
+        cur = vcmanager.auto_rejoin_enabled()
+        await vcmanager.set_auto_rejoin(not cur)
+        new_state = not cur
+        await m.reply(
+            f"🤖 Auto-rejoin is now **{'ON ✅' if new_state else 'OFF ❌'}**.\n"
+            + ("If a voice chat ends, accounts will automatically rejoin when a new call starts."
+               if new_state else "Accounts will no longer auto-rejoin."),
+            reply_markup=main_menu() if not new_state else main_menu_off(),
+        )
+
+    elif text == "🎯 Control Account":
+        sessions = await db.list_sessions()
+        if not sessions:
+            await m.reply("No accounts to control.")
+            return
+        await m.reply("Pick an account to control:", reply_markup=acct_kb(sessions))
+
+    elif text == "📊 Status":
+        await _status_text(m)
+
+    elif text == "📚 Tutorial":
+        await _tutorial(m)
+
+    elif text == "👤 Users":
+        if uid not in OWNER_IDS:
+            await m.reply("Owner only.")
+            return
+        users = [u async for u in db.list_users()]
+        await m.reply(
+            "**Authorized Users (besides owner):**\n"
+            + ("\n".join(f"• `{u}`" for u in users) if users else "None added.")
+            + "\n\nCommands:\n`/adduser <id>`\n`/deluser <id>`"
+        )
+
+    else:
+        # not a menu button — fall through to conversation handler
+        await _conv_handler(client, m)
+
+
+# ---------------- Conversations ----------------
+
+async def _conv_handler(client: Client, m: Message):
+    uid = m.from_user.id
+    state = conv.get(uid)
+    if not state:
+        return
+    text = m.text.strip()
+    if text == "/cancel":
+        conv.pop(uid, None)
+        phone_state.pop(uid, None)
+        await m.reply("Cancelled.", reply_markup=main_menu())
+        return
+
+    if state == "await_string":
+        name = "acc_" + hashlib.md5(text.encode()).hexdigest()[:8]
+        await db.add_session(name, "string")
+        ok = await vcmanager.start_client(name)
+        await m.reply(
+            f"{'✅' if ok else '⚠️'} String session saved as `{name}`.\n"
+            + ("Account started." if ok else "Failed to start — check logs."),
+            reply_markup=main_menu(),
+        )
+        conv.pop(uid, None)
+
+    elif state == "await_phone":
+        phone = text
+        name = "acc_" + hashlib.md5(phone.encode()).hexdigest()[:8]
+        app = Client(
+            name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            workdir=SESSIONS_DIR,
+            in_memory=False,
+        )
+        await app.connect()
+        try:
+            sent_code = await app.send_code(phone)
+        except Exception as e:
+            await m.reply(f"Failed to send code: {e}", reply_markup=main_menu())
+            conv.pop(uid, None)
+            return
+        conv[uid] = "await_code"
+        phone_state[uid] = {
+            "app": app,
+            "phone": phone,
+            "code_hash": sent_code.phone_code_hash,
+            "name": name,
+        }
+        await m.reply("Send the **login code** you just received.")
+
+    elif state == "await_code":
+        st = phone_state.get(uid)
+        if not st:
+            await m.reply("Session expired. Try again.")
+            conv.pop(uid, None)
+            return
+        try:
+            await st["app"].sign_in(st["phone"], text, st["code_hash"])
+            await db.add_session(st["name"], st["phone"])
+            await vcmanager.start_client(st["name"])
+            await m.reply(
+                f"✅ Logged in and saved as `{st['name']}`.",
+                reply_markup=main_menu(),
+            )
+        except Exception as e:
+            if "PASSWORD" in str(e):
+                conv[uid] = "await_2fa"
+                await m.reply("2FA enabled. Send your **cloud password**.")
+                return
+            await m.reply(f"Login failed: {e}", reply_markup=main_menu())
+        phone_state.pop(uid, None)
+        conv.pop(uid, None)
+
+    elif state == "await_2fa":
+        st = phone_state.get(uid)
+        if not st:
+            await m.reply("Session expired.")
+            conv.pop(uid, None)
+            return
+        try:
+            await st["app"].check_password(text)
+            await db.add_session(st["name"], st["phone"])
+            await vcmanager.start_client(st["name"])
+            await m.reply(
+                f"✅ Logged in (2FA) and saved as `{st['name']}`.",
+                reply_markup=main_menu(),
+            )
+        except Exception as e:
+            await m.reply(f"2FA failed: {e}", reply_markup=main_menu())
+        phone_state.pop(uid, None)
+        conv.pop(uid, None)
+
+    elif state == "await_target":
+        target = text
+        chat_id = None
+        title = target
+        try:
+            app = None
+            if vcmanager._clients:
+                app = next(iter(vcmanager._clients.values()))
+            if app and app.is_connected:
+                chat = await app.get_chat(target)
+                chat_id = chat.id
+                title = chat.title or chat.first_name or str(chat.id)
+        except Exception:
+            try:
+                chat_id = int(target)
+            except Exception:
+                await m.reply(
+                    "Could not resolve that target.\nSend a valid link or numeric chat ID.",
+                    reply_markup=main_menu(),
+                )
+                conv.pop(uid, None)
+                return
+        if chat_id is None:
+            chat_id = target
+        await db.add_target(chat_id, title, target)
+        await m.reply(
+            f"✅ Target added: **{title}**\n`{target}`",
+            reply_markup=main_menu(),
+        )
+        conv.pop(uid, None)
+
+
+# ---------------- Callback queries (inline buttons) ----------------
+
+@bot.on_callback_query()
+async def callback_handler(client: Client, cq):
+    uid = cq.from_user.id
+    if not await is_allowed_user(uid):
+        await cq.answer("Not authorized.", show_alert=True)
+        return
+    data = cq.data
+
+    if data.startswith("acct:"):
+        name = data.split(":", 1)[1]
+        acct_select[uid] = name
+        joined = vcmanager.joined_targets(name)
+        if name in vcmanager._dead:
+            status = "❌ Dead session"
+        elif name in vcmanager._clients:
+            status = "🟢 Active"
+        else:
+            status = "⚪ Inactive"
+        await cq.message.edit_text(
+            f"**Account:** `{name}`\n**Status:** {status}\n**Joined VCs:** {len(joined)}",
+            reply_markup=acct_action_kb(name),
+        )
+        await cq.answer()
+
+    elif data.startswith("ajoin:"):
+        name = data.split(":", 1)[1]
+        targets = await db.list_targets()
+        if not targets:
+            await cq.answer("No targets set.", show_alert=True)
+            return
+        await cq.answer("Joining...")
+        res = await vcmanager.join_all_targets(name, targets)
+        ok = sum(1 for v in res.values() if v)
+        await cq.message.edit_text(
+            f"**Account:** `{name}`\nJoined {ok}/{len(targets)} voice chats.",
+            reply_markup=acct_action_kb(name),
+        )
+
+    elif data.startswith("aleave:"):
+        name = data.split(":", 1)[1]
+        joined = vcmanager.joined_targets(name)
+        for cid in joined:
+            await vcmanager.leave_vc(name, cid)
+        await cq.answer("Left all VCs.")
+        await cq.message.edit_text(
+            f"**Account:** `{name}`\nLeft all voice chats.",
+            reply_markup=acct_action_kb(name),
+        )
+
+    elif data.startswith("arestart:"):
+        name = data.split(":", 1)[1]
+        await cq.answer("Restarting...")
+        await vcmanager.stop_client(name)
+        ok = await vcmanager.start_client(name)
+        await cq.message.edit_text(
+            f"**Account:** `{name}`\n{'✅ Restarted' if ok else '❌ Failed'}",
+            reply_markup=acct_action_kb(name),
+        )
+
+    elif data.startswith("adelete:"):
+        name = data.split(":", 1)[1]
+        await vcmanager.stop_client(name)
+        await db.remove_session(name)
+        for ext in (".session", ".session-journal"):
+            p = os.path.join(SESSIONS_DIR, name + ext)
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+        await cq.answer("Deleted.")
+        await cq.message.edit_text(f"🗑 Account `{name}` deleted.")
+
+    elif data == "back_acct":
+        sessions = await db.list_sessions()
+        if not sessions:
+            await cq.message.edit_text("No accounts.")
+            await cq.answer()
+            return
+        await cq.message.edit_text("Pick an account:", reply_markup=acct_kb(sessions))
+        await cq.answer()
+
+    elif data.startswith("tdel:"):
+        cid_raw = data.split(":", 1)[1]
+        try:
+            cid = int(cid_raw)
+        except Exception:
+            cid = cid_raw
+        await db.remove_target(cid)
+        await cq.answer("Target removed.")
+        targets = await db.list_targets()
+        if targets:
+            await cq.message.edit_text("Targets (tap to remove):", reply_markup=target_kb(targets))
+        else:
+            await cq.message.edit_text("No targets left.")
+
+
+# ---------------- Tutorial ----------------
+
+async def _tutorial(m: Message):
+    await m.reply(
+        "**📚 Tutorial — VC Joiner Bot**\n\n"
+        "**Step 1 — Add an account**\n"
+        "Tap **➕ Add String** and paste a Pyrogram string session.\n"
+        "Or tap **➕ Add Login** and enter a phone number → OTP → 2FA.\n\n"
+        "**Step 2 — Add targets**\n"
+        "Tap **➕ Add Target GC** and send a group/channel link or chat ID.\n"
+        "Works on public, private, groups, and channels.\n\n"
+        "**Step 3 — Start VC join**\n"
+        "Tap **▶️ Start All VC**. Every account joins every target voice chat (muted).\n\n"
+        "**Step 4 — Auto-rejoin**\n"
+        "Toggle **🤖 Auto Join** ON. If a call ends and a new one starts, accounts rejoin automatically.\n\n"
+        "**Step 5 — Control a single account**\n"
+        "Tap **🎯 Control Account**, pick one, then join/leave/restart/delete it.\n\n"
+        "**Step 6 — Add users (owner)**\n"
+        "Use `/adduser <id>` to let someone else use the bot.\n\n"
+        "**Tips**\n"
+        "• `/status` shows health and counts.\n"
+        "• String sessions are easiest for hosting.\n"
+        "• Keep your API credentials private."
+    )
+
+
+# ---------------- Owner-only commands ----------------
+
+@bot.on_message(filters.command("adduser") & is_owner)
+async def adduser_cmd(_, m: Message):
+    parts = m.text.split()
+    if len(parts) < 2:
+        await m.reply("Usage: `/adduser <user_id>`")
+        return
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        await m.reply("User ID must be a number.")
+        return
+    ok = await db.add_user(uid)
+    await m.reply("✅ User added." if ok else "User already exists.")
+
+
+@bot.on_message(filters.command("deluser") & is_owner)
+async def deluser_cmd(_, m: Message):
+    parts = m.text.split()
+    if len(parts) < 2:
+        await m.reply("Usage: `/deluser <id>`")
+        return
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        await m.reply("User ID must be a number.")
+        return
+    ok = await db.remove_user(uid)
+    await m.reply("✅ User removed." if ok else "User not found.")
+
+
+@bot.on_message(filters.command("delacc") & is_owner)
+async def delacc_cmd(_, m: Message):
+    parts = m.text.split()
+    if len(parts) < 2:
+        await m.reply("Usage: `/delacc <name>`")
+        return
+    name = parts[1]
+    await vcmanager.stop_client(name)
+    await db.remove_session(name)
+    for ext in (".session", ".session-journal"):
+        p = os.path.join(SESSIONS_DIR, name + ext)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+    await m.reply(f"✅ Account `{name}` removed.")
+
+
+@bot.on_message(filters.command("deltarget") & is_owner)
+async def deltarget_cmd(_, m: Message):
+    parts = m.text.split()
+    if len(parts) < 2:
+        await m.reply("Usage: `/deltarget <chat_id>`")
+        return
+    try:
+        cid = int(parts[1])
+    except ValueError:
+        cid = parts[1]
+    ok = await db.remove_target(cid)
+    await m.reply("✅ Target removed." if ok else "Target not found.")
