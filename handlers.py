@@ -174,8 +174,8 @@ def acct_kb(sessions: list):
     rows = []
     for s in sessions:
         name = s.get("session_name", str(s)) if isinstance(s, dict) else str(s)
-        rows.append([InlineKeyboardButton(f"🆔 {name}", callback_data=f"acct:{name}")])
-    rows.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="back_menu")])
+        rows.append([_btn(f"🆔 {name}", callback_data=f"acct:{name}")])
+    rows.append([_btn("🔙 Back to Menu", callback_data="back_menu")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -183,14 +183,14 @@ def acct_action_kb(name: str):
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("🟢 Join VC", callback_data=f"ajoin:{name}"),
-                InlineKeyboardButton("🔴 Leave VC", callback_data=f"aleave:{name}"),
+                _btn("🟢 Join VC", callback_data=f"ajoin:{name}"),
+                _btn("🔴 Leave VC", callback_data=f"aleave:{name}"),
             ],
             [
-                InlineKeyboardButton("🟡 Restart", callback_data=f"arestart:{name}"),
+                _btn("🟡 Restart", callback_data=f"arestart:{name}"),
                 _btn("⚫ Delete", callback_data=f"adelete:{name}", style="danger"),
             ],
-            [InlineKeyboardButton("🔵 Back", callback_data="back_acct")],
+            [_btn("🔵 Back", callback_data="back_acct")],
         ]
     )
 
@@ -202,7 +202,7 @@ def target_kb(targets: list):
         rows.append(
             [InlineKeyboardButton(f"🎯 {title}", callback_data=f"tdel:{t.get('chat_id')}")]
         )
-    rows.append([InlineKeyboardButton("🔵 Back", callback_data="back_menu")])
+    rows.append([_btn("🔵 Back", callback_data="back_menu")])
     return InlineKeyboardMarkup(rows)
 
 

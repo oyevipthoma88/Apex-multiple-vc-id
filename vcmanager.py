@@ -149,7 +149,26 @@ async def _resolve_chat_id(session_name: str, target) -> Optional[int]:
         return None
 
 
+
+
+def _is_invite_link(chat_id):
+    """True agar chat_id private invite link hai (t.me/+... ya t.me/joinchat/...)."""
+    if not isinstance(chat_id, str):
+        return False
+    t = chat_id.strip().lower()
+    return ("t.me/+" in t or "t.me/joinchat/" in t or "telegram.me/+" in t or
+            "telegram.dog/+" in t)
+
+
 async def join_chat(session_name: str, chat_id) -> bool:
+    if _is_invite_link(chat_id):
+        try:
+            await app.join_chat(chat_id.strip())
+            print(f"[join_chat] {session_name}: joined invite link")
+            return True
+        except Exception as e:
+            print(f"[join_chat] {session_name}: invite link failed: {e}")
+            return False
     if isinstance(chat_id, str) and chat_id.lstrip("-").isdigit():
         chat_id = int(chat_id)
     if isinstance(chat_id, int) and chat_id > 0:
@@ -184,6 +203,17 @@ async def join_chat(session_name: str, chat_id) -> bool:
 
 
 async def join_vc(session_name: str, chat_id: int, retry: int = 0) -> bool:
+    if _is_invite_link(chat_id):
+        # pehle join karo, phir VC join karo
+        ok = await join_chat(session_name, chat_id)
+        if not ok:
+            return False
+        # joined chat ka real ID nikaalo
+        try:
+            chat = await app.get_chat(chat_id.strip())
+            chat_id = chat.id
+        except Exception:
+            return False
     if isinstance(chat_id, str) and chat_id.lstrip("-").isdigit():
         chat_id = int(chat_id)
     if isinstance(chat_id, int) and chat_id > 0:
