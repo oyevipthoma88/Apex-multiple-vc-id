@@ -1,7 +1,14 @@
 import asyncio
-import time
+from typing import Optional
+
 from pyrogram import Client
-from pyrogram.errors import FloodWait, UserDeactivated, AuthKeyUnregistered, UserNotParticipant
+from pyrogram.errors import (
+    FloodWait,
+    UserDeactivated,
+    AuthKeyUnregistered,
+    UserNotParticipant,
+    ChannelPrivate,
+)
 from pytgcalls import PyTgCalls
 from pytgcalls.exceptions import (
     GroupCallNotFound,
@@ -10,47 +17,58 @@ from pytgcalls.exceptions import (
 )
 from config import API_ID, API_HASH, SESSIONS_DIR
 
-_clients: dict[str, Client] = {}
-_tgcalls: dict[str, PyTgCalls] = {}
-_joined: dict[str, set[int]] = {}
-_dead: set[str] = set()
-_login_in_progress: set[str] = set()
+_clients: dict = {}
+_tgcalls: dict = {}
+_joined: dict = {}
+_dead: set = set()
+_login_in_progress: set = set()
+_started_tgcalls: set = set()
 
 _auto_rejoin: bool = True
-_rejoin_task: asyncio.Task | None = None
-_REJOIN_INTERVAL = 15
+_rejoin_task: Optional[asyncio.Task] = None
+_REJOIN_INTERVAL = 20
 _MAX_RETRIES = 3
-_JOIN_STAGGER = 2.5  # seconds between accounts to avoid flood
+_JOIN_STAGGER = 3.0
 
 
-def make_client(session_name: str) -> Client:
+def make_client(session_name: str, session_string: str = "") -> Client:
     if session_name in _clients:
         return _clients[session_name]
-    app = Client(
-        session_name,
-        api_id=API_ID,
-        api_hash=API_HASH,
-        workdir=SESSIONS_DIR,
-        no_updates=True,
-    )
+    if session_string:
+        app = Client(
+            session_name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            session_string=session_string,
+            no_updates=True,
+        )
+    else:
+        app = Client(
+            session_name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            workdir=SESSIONS_DIR,
+            no_updates=True,
+            in_memory=False,
+        )
     _clients[session_name] = app
     return app
 
 
-async def _handle_flood(coro):
-    """Run a coroutine, sleeping through any FloodWait."""
-    while True:
-        try:
-            return await coro
-        except FloodWait as e:
-            wait = min(e.value, 60)
-            print(f"[flood] sleeping {wait}s")
-            await asyncio.sleep(wait + 1)
-        except (UserDeactivated, AuthKeyUnregistered) as e:
-            raise
+async def _with_flood_wait(func, *args, **kwargs):
+    """Call func(*args, **kwargs); sleep through FloodWait and retry once."""
+    try:
+        return await func(*args, **kwargs)
+    except FloodWait as e:
+        wait = min(e.value, 120)
+        print(f"[flood] sleeping {wait}s")
+        await asyncio.sleep(wait + 1)
+        return await func(*args, **kwargs)
+    except (UserDeactivated, AuthKeyUnregistered):
+        raise
 
 
-async def start_client(session_name: str) -> bool:
+async def start_client(session_name: str, session_string: str = "") -> bool:
     if session_name in _login_in_progress:
         return False
     if session_name in _dead:
@@ -58,7 +76,7 @@ async def start_client(session_name: str) -> bool:
         return False
     _login_in_progress.add(session_name)
     try:
-        app = make_client(session_name)
+        app = make_client(session_name, session_string)
         if not app.is_connected:
             try:
                 await app.start()
@@ -67,12 +85,25 @@ async def start_client(session_name: str) -> bool:
                 _dead.add(session_name)
                 return False
             except FloodWait as e:
-                await asyncio.sleep(min(e.value, 60) + 1)
-                await app.start()
-        call = PyTgCalls(app)
-        if not call._is_started:
-            await call.start()
-        _tgcalls[session_name] = call
+                await asyncio.sleep(min(e.value, 120) + 1)
+                try:
+                    await app.start()
+                except (UserDeactivated, AuthKeyUnregistered):
+                    _dead.add(session_name)
+                    return False
+
+        call = _tgcalls.get(session_name)
+        if call is None:
+            call = PyTgCalls(app)
+            if session_name not in _started_tgcalls:
+                try:
+                    await call.start()
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "already" not in msg and "started" not in msg:
+                        print(f"[start_client] pytgcalls start {session_name}: {e}")
+                _started_tgcalls.add(session_name)
+            _tgcalls[session_name] = call
         _dead.discard(session_name)
         return True
     except Exception as e:
@@ -92,6 +123,7 @@ async def stop_client(session_name: str) -> bool:
                 await call.stop()
             except Exception:
                 pass
+        _started_tgcalls.discard(session_name)
         app = _clients.pop(session_name, None)
         if app and app.is_connected:
             try:
@@ -105,13 +137,12 @@ async def stop_client(session_name: str) -> bool:
         return False
 
 
-async def _resolve_chat_id(session_name: str, target) -> int | None:
-    """Resolve a link/username/numeric to a real chat id."""
+async def _resolve_chat_id(session_name: str, target) -> Optional[int]:
     app = _clients.get(session_name)
     if not app or not app.is_connected:
         return None
     try:
-        chat = await app.get_chat(target)
+        chat = await _with_flood_wait(app.get_chat, target)
         return chat.id
     except Exception:
         return None
@@ -124,22 +155,24 @@ async def join_chat(session_name: str, chat_id) -> bool:
         if not ok:
             return False
         app = _clients[session_name]
-    # If target is a link, resolve it; if already a member, fine.
     try:
-        await _handle_flood(app.get_chat(chat_id))
+        await _with_flood_wait(app.get_chat, chat_id)
         return True
+    except (UserDeactivated, AuthKeyUnregistered):
+        _dead.add(session_name)
+        return False
     except Exception:
         pass
     try:
-        await _handle_flood(app.join_chat(str(chat_id)))
+        await _with_flood_wait(app.join_chat, str(chat_id))
         return True
-    except FloodWait:
-        return False
     except UserNotParticipant:
         return True
+    except ChannelPrivate:
+        return True
     except Exception as e:
-        # Already a member or banned
-        if "already" in str(e).lower() or "ChannelPrivate" in str(e):
+        msg = str(e).lower()
+        if "already" in msg or "channelprivate" in msg:
             return True
         print(f"[join_chat] {session_name}: {e}")
         return False
@@ -147,17 +180,18 @@ async def join_chat(session_name: str, chat_id) -> bool:
 
 async def join_vc(session_name: str, chat_id: int, retry: int = 0) -> bool:
     call = _tgcalls.get(session_name)
-    if not call:
+    if call is None:
         ok = await start_client(session_name)
         if not ok:
             return False
-        call = _tgcalls[session_name]
+        call = _tgcalls.get(session_name)
+        if call is None:
+            return False
     try:
         call.join_group_call(chat_id, None, mute=True)
         _joined.setdefault(session_name, set()).add(chat_id)
         return True
     except NoActiveGroupCall:
-        # No active call right now — that's okay, auto-rejoin will catch it later
         return False
     except GroupCallNotFound:
         return False
@@ -175,14 +209,13 @@ async def join_vc(session_name: str, chat_id: int, retry: int = 0) -> bool:
 
 async def leave_vc(session_name: str, chat_id: int) -> bool:
     call = _tgcalls.get(session_name)
-    if not call:
-        return False
-    try:
-        call.leave_group_call(chat_id)
-    except (NotInGroupCallError, GroupCallNotFound):
-        pass
-    except Exception:
-        pass
+    if call:
+        try:
+            call.leave_group_call(chat_id)
+        except (NotInGroupCallError, GroupCallNotFound):
+            pass
+        except Exception:
+            pass
     _joined.get(session_name, set()).discard(chat_id)
     return True
 
@@ -190,23 +223,21 @@ async def leave_vc(session_name: str, chat_id: int) -> bool:
 async def join_all_targets(session_name: str, targets: list) -> dict:
     results = {}
     for t in targets:
-        chat_id = t["chat_id"]
+        chat_id = t.get("chat_id")
         joined_chat = await join_chat(session_name, chat_id)
         if not joined_chat:
-            results[chat_id] = False
+            results[str(chat_id)] = False
             continue
-        # Resolve link to int id for pytgcalls
         if not isinstance(chat_id, int):
             resolved = await _resolve_chat_id(session_name, chat_id)
             if resolved:
                 chat_id = resolved
         joined_vc = await join_vc(session_name, chat_id)
-        results[chat_id] = joined_vc
+        results[str(chat_id)] = joined_vc
     return results
 
 
 async def join_all_accounts(targets: list) -> dict:
-    """Join all accounts with staggered timing to avoid Telegram flood bans."""
     results = {}
     for s in list(_clients.keys()):
         results[s] = await join_all_targets(s, targets)
@@ -216,19 +247,16 @@ async def join_all_accounts(targets: list) -> dict:
 
 async def is_in_call(session_name: str, chat_id: int) -> bool:
     call = _tgcalls.get(session_name)
-    if not call:
+    if call is None:
         return False
     try:
         call.get_call(chat_id)
         return True
     except (NoActiveGroupCall, GroupCallNotFound):
-        # No call exists — account isn't "in" it, but also nothing to rejoin yet
         return chat_id in _joined.get(session_name, set())
     except Exception:
         return chat_id in _joined.get(session_name, set())
 
-
-# ---------- Auto-rejoin background loop ----------
 
 def auto_rejoin_enabled() -> bool:
     return _auto_rejoin
@@ -259,17 +287,17 @@ async def _rejoin_loop():
                 if sname in _dead:
                     continue
                 for t in targets:
-                    cid = t["chat_id"]
+                    cid = t.get("chat_id")
+                    if not cid:
+                        continue
                     try:
                         cid_int = int(cid)
                     except (TypeError, ValueError):
-                        # Resolve link to int
                         cid_int = await _resolve_chat_id(sname, cid)
                         if not cid_int:
                             continue
                     in_call = await is_in_call(sname, cid_int)
                     if not in_call:
-                        # Check if a call actually exists before rejoining
                         try:
                             await join_chat(sname, cid_int)
                         except Exception:
@@ -277,6 +305,7 @@ async def _rejoin_loop():
                         joined = await join_vc(sname, cid_int)
                         if joined:
                             print(f"[auto-rejoin] {sname} rejoined {cid_int}")
+                    await asyncio.sleep(0.5)
         except asyncio.CancelledError:
             print("[auto-rejoin] loop cancelled")
             break
@@ -309,7 +338,6 @@ def joined_targets(session_name: str) -> list:
 
 
 async def validate_session(session_name: str) -> str:
-    """Returns 'alive', 'dead', or 'unknown'."""
     app = _clients.get(session_name)
     if not app:
         ok = await start_client(session_name)
@@ -320,8 +348,9 @@ async def validate_session(session_name: str) -> str:
         ok = await start_client(session_name)
         if not ok:
             return "dead" if session_name in _dead else "unknown"
+        app = _clients[session_name]
     try:
-        me = await app.get_me()
+        await app.get_me()
         return "alive"
     except (UserDeactivated, AuthKeyUnregistered):
         _dead.add(session_name)

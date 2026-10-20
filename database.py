@@ -34,16 +34,34 @@ async def remove_user(user_id: int) -> bool:
 
 
 async def list_users():
-    async for u in users_col.find({}, {"_id": 0}):
-        yield u["user_id"]
+    cursor = users_col.find({}, {"_id": 0})
+    return [u["user_id"] async for u in cursor]
 
 
-async def add_session(session_name: str, phone: str) -> bool:
+async def add_session(session_name: str, phone: str, session_string: str = "") -> bool:
     try:
-        await sessions_col.insert_one({"session_name": session_name, "phone": phone})
+        await sessions_col.insert_one(
+            {
+                "session_name": session_name,
+                "phone": phone,
+                "session_string": session_string,
+            }
+        )
         return True
     except Exception:
-        return False
+        await sessions_col.update_one(
+            {"session_name": session_name},
+            {"$set": {"phone": phone, "session_string": session_string}},
+        )
+        return True
+
+
+async def update_session_string(session_name: str, session_string: str) -> bool:
+    res = await sessions_col.update_one(
+        {"session_name": session_name},
+        {"$set": {"session_string": session_string}},
+    )
+    return res.modified_count > 0
 
 
 async def remove_session(session_name: str) -> bool:
@@ -52,10 +70,15 @@ async def remove_session(session_name: str) -> bool:
 
 
 async def list_sessions():
-    return [s["session_name"] async for s in sessions_col.find({}, {"_id": 0})]
+    cursor = sessions_col.find({}, {"_id": 0})
+    return [s async for s in cursor]
 
 
-async def add_target(chat_id: int, title: str, link: str) -> bool:
+async def get_session(session_name: str):
+    return await sessions_col.find_one({"session_name": session_name}, {"_id": 0})
+
+
+async def add_target(chat_id, title: str, link: str) -> bool:
     try:
         await targets_col.insert_one(
             {"chat_id": chat_id, "title": title, "link": link}
@@ -68,10 +91,11 @@ async def add_target(chat_id: int, title: str, link: str) -> bool:
         return True
 
 
-async def remove_target(chat_id: int) -> bool:
+async def remove_target(chat_id) -> bool:
     res = await targets_col.delete_one({"chat_id": chat_id})
     return res.deleted_count > 0
 
 
 async def list_targets():
-    return [t async for t in targets_col.find({}, {"_id": 0})]
+    cursor = targets_col.find({}, {"_id": 0})
+    return [t async for t in cursor]

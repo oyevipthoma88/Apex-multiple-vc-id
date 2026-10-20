@@ -39,13 +39,15 @@ def home():
 
 @app.route("/health")
 def health():
-    import vcmanager
-    import database as db_sync
-    return jsonify(
-        status="ok",
-        active_accounts=len(vcmanager.active_accounts()),
-        auto_rejoin=vcmanager.auto_rejoin_enabled(),
-    )
+    try:
+        import vcmanager
+        return jsonify(
+            status="ok",
+            active_accounts=len(vcmanager.active_accounts()),
+            auto_rejoin=vcmanager.auto_rejoin_enabled(),
+        )
+    except Exception as e:
+        return jsonify(status="error", error=str(e)), 500
 
 
 def run_web(port: int):

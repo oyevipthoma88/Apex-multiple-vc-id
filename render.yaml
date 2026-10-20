@@ -1,11 +1,10 @@
 services:
   - type: web
     name: vc-joiner-bot
-    runtime: python
+    runtime: docker
     plan: free
     region: oregon
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: API_ID
         sync: false
@@ -19,9 +18,6 @@ services:
         sync: false
       - key: DB_NAME
         value: vcjoiner
-      - key: SESSIONS_DIR
-        value: /data/sessions
-    disk:
-      name: sessions-disk
-      mountPath: /data
-      sizeGB: 1
+      - key: PORT
+        value: 8080
+    healthCheckPath: /health

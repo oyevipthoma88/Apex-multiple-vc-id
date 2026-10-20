@@ -6,6 +6,7 @@ from database import init_db
 from web import start_in_thread
 from handlers import bot
 import vcmanager
+import database as db
 
 
 def _check_env():
@@ -18,7 +19,7 @@ def _check_env():
         missing.append("OWNER_IDS")
     if missing:
         print("Missing env vars: " + ", ".join(missing))
-        print("Set them in Render Dashboard or your .env file.")
+        print("Set them in your hosting dashboard or .env file.")
         sys.exit(1)
 
 
@@ -30,12 +31,12 @@ async def main():
     print(f"Web keep-alive running on port {PORT}.")
     print("Starting Telegram bot...")
     await bot.start()
-    # Restore any saved accounts + auto-rejoin on boot
-    import database as db
     sessions = await db.list_sessions()
     for s in sessions:
-        ok = await vcmanager.start_client(s)
-        print(f"  restored {s}: {'ok' if ok else 'failed'}")
+        sname = s["session_name"] if isinstance(s, dict) else s
+        sstr = s.get("session_string", "") if isinstance(s, dict) else ""
+        ok = await vcmanager.start_client(sname, sstr)
+        print(f"  restored {sname}: {'ok' if ok else 'failed'}")
     await vcmanager.start_rejoin_loop()
     print(f"Bot is running. {len(sessions)} accounts loaded. Press Ctrl+C to stop.")
     try:

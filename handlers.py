@@ -1,6 +1,5 @@
-import asyncio
-import os
 import hashlib
+
 from pyrogram import Client, filters
 from pyrogram.types import (
     Message,
@@ -21,22 +20,23 @@ bot = Client(
     workdir=SESSIONS_DIR,
 )
 
-conv: dict[int, str] = {}
-phone_state: dict[int, dict] = {}
-acct_select: dict[int, str] = {}
-
-BOT_USERNAME = ""
+conv: dict = {}
+phone_state: dict = {}
+acct_select: dict = {}
 
 
-def is_owner(_, __, m: Message) -> bool:
-    return bool(m.from_user and m.from_user.id in OWNER_IDS)
+def _is_owner(user_id: int) -> bool:
+    return user_id in OWNER_IDS
+
+
+owner_filter = filters.create(
+    lambda _, __, m: bool(m.from_user and m.from_user.id in OWNER_IDS)
+)
 
 
 async def is_allowed_user(user_id: int) -> bool:
     return user_id in OWNER_IDS or await db.is_allowed(user_id)
 
-
-# ---------------- Menus ----------------
 
 def main_menu():
     return ReplyKeyboardMarkup(
@@ -67,7 +67,8 @@ def main_menu_off():
 def acct_kb(sessions: list):
     rows = []
     for s in sessions:
-        rows.append([InlineKeyboardButton(f"👤 {s}", callback_data=f"acct:{s}")])
+        name = s.get("session_name", str(s)) if isinstance(s, dict) else str(s)
+        rows.append([InlineKeyboardButton(f"👤 {name}", callback_data=f"acct:{name}")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -90,17 +91,17 @@ def acct_action_kb(name: str):
 def target_kb(targets: list):
     rows = []
     for t in targets:
-        title = t.get("title", str(t["chat_id"]))[:30]
+        title = t.get("title", str(t.get("chat_id")))[:30]
         rows.append(
-            [InlineKeyboardButton(f"🎯 {title}", callback_data=f"tdel:{t['chat_id']}")]
+            [InlineKeyboardButton(f"🎯 {title}", callback_data=f"tdel:{t.get('chat_id')}")]
         )
     return InlineKeyboardMarkup(rows)
 
 
-# ---------------- Core handlers ----------------
-
 @bot.on_message(filters.command("start"))
 async def start_cmd(_, m: Message):
+    if not m.from_user:
+        return
     uid = m.from_user.id
     allowed = await is_allowed_user(uid)
     if uid in OWNER_IDS:
@@ -127,7 +128,7 @@ async def start_cmd(_, m: Message):
 
 @bot.on_message(filters.command("help"))
 async def help_cmd(_, m: Message):
-    if not await is_allowed_user(m.from_user.id):
+    if not m.from_user or not await is_allowed_user(m.from_user.id):
         return
     await _help_text(m)
 
@@ -149,14 +150,14 @@ async def _help_text(m: Message):
 
 @bot.on_message(filters.command("health"))
 async def health_cmd(_, m: Message):
-    if not await is_allowed_user(m.from_user.id):
+    if not m.from_user or not await is_allowed_user(m.from_user.id):
         return
     await _status_text(m)
 
 
 @bot.on_message(filters.command("status"))
 async def status_cmd(_, m: Message):
-    if not await is_allowed_user(m.from_user.id):
+    if not m.from_user or not await is_allowed_user(m.from_user.id):
         return
     await _status_text(m)
 
@@ -165,7 +166,7 @@ async def _status_text(m: Message):
     sessions = await db.list_sessions()
     targets = await db.list_targets()
     active = vcmanager.active_accounts()
-    users = [u async for u in db.list_users()]
+    users = await db.list_users()
     auto = "ON ✅" if vcmanager.auto_rejoin_enabled() else "OFF ❌"
     dead = vcmanager.dead_accounts()
     text = (
@@ -186,10 +187,10 @@ async def _status_text(m: Message):
     await m.reply(text)
 
 
-# ---------------- Keyboard routing ----------------
-
 @bot.on_message(filters.private & filters.text, group=1)
 async def menu_router(client: Client, m: Message):
+    if not m.from_user:
+        return
     uid = m.from_user.id
     if not await is_allowed_user(uid):
         return
@@ -223,13 +224,14 @@ async def menu_router(client: Client, m: Message):
             return
         lines = []
         for s in sessions:
-            if s in vcmanager._dead:
+            name = s["session_name"] if isinstance(s, dict) else s
+            if name in vcmanager._dead:
                 status = "❌"
-            elif s in vcmanager._clients:
+            elif name in vcmanager._clients:
                 status = "🟢"
             else:
                 status = "⚪"
-            lines.append(f"{status} `{s}`")
+            lines.append(f"{status} `{name}`")
         await m.reply("**Your Accounts:**\n" + "\n".join(lines))
 
     elif text == "🎯 Targets":
@@ -239,11 +241,11 @@ async def menu_router(client: Client, m: Message):
             return
         lines = []
         for t in targets:
-            title = t.get("title", str(t["chat_id"]))[:40]
-            lines.append(f"• **{title}**\n  `{t['chat_id']}`")
+            title = t.get("title", str(t.get("chat_id")))[:40]
+            lines.append(f"• **{title}**\n  `{t.get('chat_id')}`")
         await m.reply("**Target Chats:**\n" + "\n".join(lines))
 
-    elif text in ("➕ Add Target GC",):
+    elif text == "➕ Add Target GC":
         await m.reply(
             "Send the **target link or chat ID**.\n\n"
             "Examples:\n`https://t.me/xxxxx`\n`-1001234567890`\n\nSend /cancel to abort."
@@ -263,15 +265,17 @@ async def menu_router(client: Client, m: Message):
         total = 0
         failed_accounts = []
         for i, s in enumerate(sessions, 1):
-            await msg.edit(
-                f"⏳ Joining...\nAccount {i}/{len(sessions)}: `{s}`"
-            )
-            res = await vcmanager.join_all_targets(s, targets)
+            sname = s["session_name"] if isinstance(s, dict) else s
+            sstr = s.get("session_string", "") if isinstance(s, dict) else ""
+            await msg.edit(f"⏳ Joining...\nAccount {i}/{len(sessions)}: `{sname}`")
+            await vcmanager.start_client(sname, sstr)
+            res = await vcmanager.join_all_targets(sname, targets)
             ok_count = sum(1 for v in res.values() if v)
             total += ok_count
             if ok_count == 0:
-                failed_accounts.append(s)
-            await asyncio.sleep(2.5)  # stagger to avoid flood
+                failed_accounts.append(sname)
+            import asyncio as _a
+            await _a.sleep(2.5)
         await vcmanager.start_rejoin_loop()
         report = (
             f"✅ **VC Join complete**\n"
@@ -312,10 +316,10 @@ async def menu_router(client: Client, m: Message):
         await _tutorial(m)
 
     elif text == "👤 Users":
-        if uid not in OWNER_IDS:
+        if not _is_owner(uid):
             await m.reply("Owner only.")
             return
-        users = [u async for u in db.list_users()]
+        users = await db.list_users()
         await m.reply(
             "**Authorized Users (besides owner):**\n"
             + ("\n".join(f"• `{u}`" for u in users) if users else "None added.")
@@ -323,11 +327,8 @@ async def menu_router(client: Client, m: Message):
         )
 
     else:
-        # not a menu button — fall through to conversation handler
         await _conv_handler(client, m)
 
-
-# ---------------- Conversations ----------------
 
 async def _conv_handler(client: Client, m: Message):
     uid = m.from_user.id
@@ -343,8 +344,8 @@ async def _conv_handler(client: Client, m: Message):
 
     if state == "await_string":
         name = "acc_" + hashlib.md5(text.encode()).hexdigest()[:8]
-        await db.add_session(name, "string")
-        ok = await vcmanager.start_client(name)
+        await db.add_session(name, "string", text)
+        ok = await vcmanager.start_client(name, text)
         await m.reply(
             f"{'✅' if ok else '⚠️'} String session saved as `{name}`.\n"
             + ("Account started." if ok else "Failed to start — check logs."),
@@ -386,8 +387,9 @@ async def _conv_handler(client: Client, m: Message):
             return
         try:
             await st["app"].sign_in(st["phone"], text, st["code_hash"])
-            await db.add_session(st["name"], st["phone"])
-            await vcmanager.start_client(st["name"])
+            session_string = await st["app"].export_session_string()
+            await db.add_session(st["name"], st["phone"], session_string)
+            await vcmanager.start_client(st["name"], session_string)
             await m.reply(
                 f"✅ Logged in and saved as `{st['name']}`.",
                 reply_markup=main_menu(),
@@ -409,8 +411,9 @@ async def _conv_handler(client: Client, m: Message):
             return
         try:
             await st["app"].check_password(text)
-            await db.add_session(st["name"], st["phone"])
-            await vcmanager.start_client(st["name"])
+            session_string = await st["app"].export_session_string()
+            await db.add_session(st["name"], st["phone"], session_string)
+            await vcmanager.start_client(st["name"], session_string)
             await m.reply(
                 f"✅ Logged in (2FA) and saved as `{st['name']}`.",
                 reply_markup=main_menu(),
@@ -452,10 +455,10 @@ async def _conv_handler(client: Client, m: Message):
         conv.pop(uid, None)
 
 
-# ---------------- Callback queries (inline buttons) ----------------
-
 @bot.on_callback_query()
 async def callback_handler(client: Client, cq):
+    if not cq.from_user:
+        return
     uid = cq.from_user.id
     if not await is_allowed_user(uid):
         await cq.answer("Not authorized.", show_alert=True)
@@ -484,6 +487,9 @@ async def callback_handler(client: Client, cq):
         if not targets:
             await cq.answer("No targets set.", show_alert=True)
             return
+        sess = await db.get_session(name)
+        sstr = sess.get("session_string", "") if sess else ""
+        await vcmanager.start_client(name, sstr)
         await cq.answer("Joining...")
         res = await vcmanager.join_all_targets(name, targets)
         ok = sum(1 for v in res.values() if v)
@@ -505,9 +511,11 @@ async def callback_handler(client: Client, cq):
 
     elif data.startswith("arestart:"):
         name = data.split(":", 1)[1]
+        sess = await db.get_session(name)
+        sstr = sess.get("session_string", "") if sess else ""
         await cq.answer("Restarting...")
         await vcmanager.stop_client(name)
-        ok = await vcmanager.start_client(name)
+        ok = await vcmanager.start_client(name, sstr)
         await cq.message.edit_text(
             f"**Account:** `{name}`\n{'✅ Restarted' if ok else '❌ Failed'}",
             reply_markup=acct_action_kb(name),
@@ -517,6 +525,7 @@ async def callback_handler(client: Client, cq):
         name = data.split(":", 1)[1]
         await vcmanager.stop_client(name)
         await db.remove_session(name)
+        import os
         for ext in (".session", ".session-journal"):
             p = os.path.join(SESSIONS_DIR, name + ext)
             if os.path.exists(p):
@@ -551,8 +560,6 @@ async def callback_handler(client: Client, cq):
             await cq.message.edit_text("No targets left.")
 
 
-# ---------------- Tutorial ----------------
-
 async def _tutorial(m: Message):
     await m.reply(
         "**📚 Tutorial — VC Joiner Bot**\n\n"
@@ -577,9 +584,7 @@ async def _tutorial(m: Message):
     )
 
 
-# ---------------- Owner-only commands ----------------
-
-@bot.on_message(filters.command("adduser") & is_owner)
+@bot.on_message(filters.command("adduser") & owner_filter)
 async def adduser_cmd(_, m: Message):
     parts = m.text.split()
     if len(parts) < 2:
@@ -594,7 +599,7 @@ async def adduser_cmd(_, m: Message):
     await m.reply("✅ User added." if ok else "User already exists.")
 
 
-@bot.on_message(filters.command("deluser") & is_owner)
+@bot.on_message(filters.command("deluser") & owner_filter)
 async def deluser_cmd(_, m: Message):
     parts = m.text.split()
     if len(parts) < 2:
@@ -609,7 +614,7 @@ async def deluser_cmd(_, m: Message):
     await m.reply("✅ User removed." if ok else "User not found.")
 
 
-@bot.on_message(filters.command("delacc") & is_owner)
+@bot.on_message(filters.command("delacc") & owner_filter)
 async def delacc_cmd(_, m: Message):
     parts = m.text.split()
     if len(parts) < 2:
@@ -618,6 +623,7 @@ async def delacc_cmd(_, m: Message):
     name = parts[1]
     await vcmanager.stop_client(name)
     await db.remove_session(name)
+    import os
     for ext in (".session", ".session-journal"):
         p = os.path.join(SESSIONS_DIR, name + ext)
         if os.path.exists(p):
@@ -628,7 +634,7 @@ async def delacc_cmd(_, m: Message):
     await m.reply(f"✅ Account `{name}` removed.")
 
 
-@bot.on_message(filters.command("deltarget") & is_owner)
+@bot.on_message(filters.command("deltarget") & owner_filter)
 async def deltarget_cmd(_, m: Message):
     parts = m.text.split()
     if len(parts) < 2:
