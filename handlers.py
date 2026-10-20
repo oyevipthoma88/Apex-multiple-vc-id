@@ -481,7 +481,9 @@ async def _conv_handler(client: Client, m: Message):
                 pass
 
     elif state == "await_target":
-        target = text
+        target = text.strip()
+        if target.isdigit():
+            target = f"-100{target}"
         chat_id = None
         title = target
         try:
