@@ -494,7 +494,7 @@ async def _conv_handler(client: Client, m: Message):
                 title = chat.title or chat.first_name or str(chat.id)
         except Exception:
             try:
-                chat_id = int(target)
+                chat_id = _normalize_chat_id(int(target))
             except Exception:
                 await m.reply(
                     "Could not resolve that target.\nSend a valid link or numeric chat ID.",
