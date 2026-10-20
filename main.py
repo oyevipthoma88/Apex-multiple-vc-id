@@ -8,6 +8,7 @@ from web import start_in_thread
 from handlers import setup_telegram_logging, bot
 import vcmanager
 import database as db
+from pyrogram import Client
 
 
 def _check_env():
