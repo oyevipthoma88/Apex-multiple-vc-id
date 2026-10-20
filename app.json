@@ -1,0 +1,46 @@
+{
+  "name": "apex-multiple-vc-id",
+  "description": "Apex Multiple VC ID Telegram Bot",
+  "repository": "https://github.com/oyevipthoma88/Apex-multiple-vc-id",
+  "stack": "heroku-26",
+  "env": {
+    "API_ID": {
+      "description": "Telegram API ID",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API Hash",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token",
+      "required": true
+    },
+    "MONGO_URI": {
+      "description": "MongoDB Connection URI",
+      "required": true
+    },
+    "DB_NAME": {
+      "description": "MongoDB Database Name",
+      "value": "vcjoiner"
+    },
+    "SESSIONS_DIR": {
+      "description": "Sessions Directory",
+      "value": "sessions"
+    },
+    "OWNER_IDS": {
+      "description": "Owner Telegram IDs separated by spaces",
+      "value": "0"
+    },
+    "WEB_URL": {
+      "description": "Public App URL",
+      "required": false
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "standard-2x"
+    }
+  }
+}
