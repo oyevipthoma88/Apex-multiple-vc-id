@@ -2,6 +2,8 @@
 
 A clean, professional Telegram bot that joins voice chats in your target groups, channels, and private/public chats and stays connected. Built with Pyrogram + PyTgCalls, MongoDB for storage, and a Flask keep-alive server for free-tier hosting.
 
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://www.heroku.com/deploy?template=https://github.com/oyevipthoma88/Apex-multiple-vc-id)
+
 ## Features
 
 - **Multiple account login** — add accounts via **String Session** or **phone + OTP + 2FA** login flow. Sessions are stored in MongoDB so they survive restarts on ephemeral filesystems (Render/Heroku).
