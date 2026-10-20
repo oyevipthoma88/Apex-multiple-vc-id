@@ -385,7 +385,7 @@ async def _conv_handler(client: Client, m: Message):
             conv.pop(uid, None)
             return
         try:
-            await st["app"].sign_in(st["phone"], text, st["code_hash"])
+            await st["app"].sign_in(st["phone"], st["code_hash"], text)
             session_string = await st["app"].export_session_string()
             await db.add_session(st["name"], st["phone"], session_string)
             await vcmanager.start_client(st["name"], session_string)
