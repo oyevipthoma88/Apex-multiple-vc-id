@@ -5,7 +5,7 @@ from config import BOT_TOKEN, API_ID, API_HASH, OWNER_IDS, PORT
 from database import init_db
 import threading
 from web import start_in_thread
-from handlers import bot
+from handlers import setup_telegram_logging, bot
 import vcmanager
 import database as db
 
@@ -41,6 +41,11 @@ async def main():
     print("Starting Telegram bot...")
     threading.Thread(target=run_flask, daemon=True).start()
     await bot.start()
+
+    if LOG_CHANNEL_ID:
+        setup_telegram_logging(bot, LOG_CHANNEL_ID)
+        print(f"[main] Deep logging -> {LOG_CHANNEL_ID}")
+
     sessions = await db.list_sessions()
     for s in sessions:
         sname = s["session_name"] if isinstance(s, dict) else s

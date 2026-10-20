@@ -15,3 +15,5 @@ WEB_URL = os.environ.get("WEB_URL", f"http://localhost:{PORT}")
 SUPPORT_GROUP = os.environ.get("SUPPORT_GROUP", "https://t.me/telegram")
 
 os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL_ID", "0"))
