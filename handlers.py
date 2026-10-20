@@ -1,6 +1,18 @@
 import hashlib
 
 from pyrogram import Client, filters
+try:
+    from pyrogram.errors import (
+        PhoneCodeInvalid, PhoneCodeExpired, PhoneCodeEmpty,
+        SessionPasswordNeeded, PasswordHashInvalid,
+    )
+except ImportError:
+    from pyrogram.errors import (
+        PhoneCodeInvalid, PhoneCodeExpired,
+        SessionPasswordNeeded, PasswordHashInvalid,
+    )
+    class PhoneCodeEmpty(Exception):
+        pass
 from pyrogram.types import (
     Message,
     ReplyKeyboardMarkup,
@@ -8,7 +20,7 @@ from pyrogram.types import (
     InlineKeyboardButton,
     ReplyKeyboardRemove,
 )
-from config import API_ID, API_HASH, BOT_TOKEN, OWNER_IDS, SESSIONS_DIR
+from config import API_ID, API_HASH, BOT_TOKEN, OWNER_IDS, SESSIONS_DIR, SUPPORT_GROUP
 import database as db
 import vcmanager
 
@@ -66,6 +78,24 @@ def main_menu_off():
     )
 
 
+def _btn(text, **kwargs):
+    try:
+        return InlineKeyboardButton(text, **kwargs)
+    except (TypeError, ValueError):
+        kwargs.pop("style", None)
+        kwargs.pop("icon_custom_emoji_id", None)
+        return InlineKeyboardButton(text, **kwargs)
+
+def support_kb():
+    return InlineKeyboardMarkup([[
+        _btn(
+            "Support",
+            url=SUPPORT_GROUP,
+            icon_custom_emoji_id=5443038326535759644,
+            style="success",
+        )
+    ]])
+
 def acct_kb(sessions: list):
     rows = []
     for s in sessions:
@@ -84,7 +114,7 @@ def acct_action_kb(name: str):
             ],
             [
                 InlineKeyboardButton("🟡 Restart", callback_data=f"arestart:{name}"),
-                InlineKeyboardButton("⚫ Delete", callback_data=f"adelete:{name}"),
+                _btn("⚫ Delete", callback_data=f"adelete:{name}", style="danger"),
             ],
             [InlineKeyboardButton("🔵 Back", callback_data="back_acct")],
         ]
@@ -145,6 +175,7 @@ async def _help_text(m: Message):
         "/deltarget <id> — Delete a target\n\n"
         "**Menu buttons** let you do everything without commands."
     )
+    await m.reply("Need help? Join support 👇", reply_markup=support_kb())
 
 
 @bot.on_message(filters.command("health"))
@@ -187,6 +218,17 @@ async def _status_text(m: Message):
 
 
 @bot.on_message(filters.private & filters.text, group=1)
+async def _cleanup_login(uid: int):
+    st = phone_state.get(uid)
+    if st and st.get("app"):
+        try:
+            await st["app"].disconnect()
+        except Exception:
+            pass
+    phone_state.pop(uid, None)
+    conv.pop(uid, None)
+    acct_select.pop(uid, None)
+
 async def menu_router(client: Client, m: Message):
     if not m.from_user:
         return
@@ -298,7 +340,7 @@ async def menu_router(client: Client, m: Message):
             f"🤖 Auto-rejoin is now **{'ON ✅' if new_state else 'OFF ❌'}**.\n"
             + ("If a voice chat ends, accounts will automatically rejoin when a new call starts."
                if new_state else "Accounts will no longer auto-rejoin."),
-            reply_markup=main_menu_off() if new_state else main_menu(),
+            reply_markup=main_menu() if new_state else main_menu_off(),
         )
 
     elif text == "🎯 Control Account":
@@ -336,8 +378,7 @@ async def _conv_handler(client: Client, m: Message):
         return
     text = m.text.strip()
     if text == "/cancel":
-        conv.pop(uid, None)
-        phone_state.pop(uid, None)
+        await _cleanup_login(uid)
         await m.reply("Cancelled.", reply_markup=main_menu())
         return
 
@@ -366,6 +407,10 @@ async def _conv_handler(client: Client, m: Message):
         try:
             sent_code = await app.send_code(phone)
         except Exception as e:
+            try:
+                await app.disconnect()
+            except Exception:
+                pass
             await m.reply(f"Failed to send code: {e}", reply_markup=main_menu())
             conv.pop(uid, None)
             return
@@ -387,6 +432,7 @@ async def _conv_handler(client: Client, m: Message):
         try:
             await st["app"].sign_in(st["phone"], st["code_hash"], text)
             session_string = await st["app"].export_session_string()
+            await st["app"].disconnect()
             await db.add_session(st["name"], st["phone"], session_string)
             await vcmanager.start_client(st["name"], session_string)
             await m.reply(
@@ -411,6 +457,7 @@ async def _conv_handler(client: Client, m: Message):
         try:
             await st["app"].check_password(text)
             session_string = await st["app"].export_session_string()
+            await st["app"].disconnect()
             await db.add_session(st["name"], st["phone"], session_string)
             await vcmanager.start_client(st["name"], session_string)
             await m.reply(
@@ -419,8 +466,13 @@ async def _conv_handler(client: Client, m: Message):
             )
         except Exception as e:
             await m.reply(f"2FA failed: {e}", reply_markup=main_menu())
-        phone_state.pop(uid, None)
-        conv.pop(uid, None)
+        finally:
+            phone_state.pop(uid, None)
+            conv.pop(uid, None)
+            try:
+                await st["app"].disconnect()
+            except Exception:
+                pass
 
     elif state == "await_target":
         target = text

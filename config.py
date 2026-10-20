@@ -12,5 +12,6 @@ SESSIONS_DIR = os.environ.get("SESSIONS_DIR", "sessions")
 OWNER_IDS = [int(x) for x in os.environ.get("OWNER_IDS", "0").split() if x.strip()]
 PORT = int(os.environ.get("PORT", "8080"))
 WEB_URL = os.environ.get("WEB_URL", f"http://localhost:{PORT}")
+SUPPORT_GROUP = os.environ.get("SUPPORT_GROUP", "https://t.me/telegram")
 
 os.makedirs(SESSIONS_DIR, exist_ok=True)
