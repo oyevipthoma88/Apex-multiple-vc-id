@@ -51,32 +51,38 @@ async def is_allowed_user(user_id: int) -> bool:
 
 
 def main_menu():
-    return ReplyKeyboardMarkup(
-        [
-            ["➕ Add String", "➕ Add Login"],
-            ["📋 Accounts", "🎯 Targets"],
-            ["➕ Add Target GC"],
-            ["▶️ Start All VC", "⏹️ Stop All VC"],
-            ["🤖 Auto Join: ON", "🎯 Control Account"],
-            ["📊 Status", "📚 Tutorial", "👤 Users"],
-        ],
-        resize_keyboard=True,
-    )
-
+    return InlineKeyboardMarkup([
+        [_btn("➕ Add String", callback_data="m:add_string", style="success"),
+         _btn("➕ Add Login", callback_data="m:add_login", style="primary")],
+        [_btn("👤 Accounts", callback_data="m:accounts"),
+         _btn("🎯 Targets", callback_data="m:targets")],
+        [_btn("➕ Add Target GC", callback_data="m:add_target", style="primary")],
+        [_btn("▶️ Start All VC", callback_data="m:start_all", style="success"),
+         _btn("⏹️ Stop All VC", callback_data="m:stop_all", style="danger")],
+        [_btn("🤖 Auto Join: ON", callback_data="m:toggle_auto", style="success"),
+         _btn("⚙️ Control Account", callback_data="m:control")],
+        [_btn("📊 Status", callback_data="m:status"),
+         _btn("📘 Tutorial", callback_data="m:tutorial"),
+         _btn("👥 Users", callback_data="m:users")],
+        [_btn("💬 Support", url=SUPPORT_GROUP, icon_custom_emoji_id=5443038326535759644, style="success")],
+    ])
 
 def main_menu_off():
-    return ReplyKeyboardMarkup(
-        [
-            ["➕ Add String", "➕ Add Login"],
-            ["📋 Accounts", "🎯 Targets"],
-            ["➕ Add Target GC"],
-            ["▶️ Start All VC", "⏹️ Stop All VC"],
-            ["🤖 Auto Join: OFF", "🎯 Control Account"],
-            ["📊 Status", "📚 Tutorial", "👤 Users"],
-        ],
-        resize_keyboard=True,
-    )
-
+    return InlineKeyboardMarkup([
+        [_btn("➕ Add String", callback_data="m:add_string", style="success"),
+         _btn("➕ Add Login", callback_data="m:add_login", style="primary")],
+        [_btn("👤 Accounts", callback_data="m:accounts"),
+         _btn("🎯 Targets", callback_data="m:targets")],
+        [_btn("➕ Add Target GC", callback_data="m:add_target", style="primary")],
+        [_btn("▶️ Start All VC", callback_data="m:start_all", style="success"),
+         _btn("⏹️ Stop All VC", callback_data="m:stop_all", style="danger")],
+        [_btn("🤖 Auto Join: OFF", callback_data="m:toggle_auto", style="danger"),
+         _btn("⚙️ Control Account", callback_data="m:control")],
+        [_btn("📊 Status", callback_data="m:status"),
+         _btn("📘 Tutorial", callback_data="m:tutorial"),
+         _btn("👥 Users", callback_data="m:users")],
+        [_btn("💬 Support", url=SUPPORT_GROUP, icon_custom_emoji_id=5443038326535759644, style="success")],
+    ])
 
 def _normalize_chat_id(chat_id):
     """Auto-prepend -100 for positive group/channel IDs."""
@@ -533,6 +539,17 @@ async def callback_handler(client: Client, cq):
         await cq.answer("Not authorized.", show_alert=True)
         return
     data = cq.data
+    if data == "m:accounts":
+        sessions = await db.list_sessions()
+        await cq.answer()
+        await cq.message.edit_text("👤 **Accounts:**", reply_markup=acct_kb(sessions) if sessions else main_menu())
+        return
+    if data == "m:targets":
+        targets = await db.list_targets()
+        await cq.answer()
+        txt = "🎯 **Targets:**\n\n" + ("\n".join(f"• `{t}`" for t in targets) if targets else "None")
+        await cq.message.edit_text(txt, reply_markup=main_menu())
+        return
 
     # ── Inline menu callbacks ──
     if data == "m:add_string":
