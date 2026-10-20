@@ -9,6 +9,7 @@ from handlers import setup_telegram_logging, bot
 import vcmanager
 import database as db
 from pyrogram import Client
+import os
 
 
 def _check_env():
@@ -40,8 +41,10 @@ async def main():
     start_in_thread(PORT)
     print(f"Web keep-alive running on port {PORT}.")
     print("Starting Telegram bot...")
-    threading.Thread(target=run_flask, daemon=True).start()
+    # threading.Thread(target=run_flask, daemon=True).start()
     await bot.start()
+
+    LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL_ID", "0"))
 
     if LOG_CHANNEL_ID:
         setup_telegram_logging(bot, LOG_CHANNEL_ID)
