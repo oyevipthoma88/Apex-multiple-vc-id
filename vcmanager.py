@@ -161,15 +161,14 @@ def _is_invite_link(chat_id):
 
 
 async def join_chat(session_name: str, chat_id) -> bool:
-    app = vcmanager._clients.get(session_name) if hasattr(vcmanager, "_clients") else None
-    if app is None:
-        try:
-            app = _clients.get(session_name)
-        except Exception:
-            app = None
+    app = _clients.get(session_name)
     if app is None or not getattr(app, "is_connected", False):
-        print(f"[join_chat] {session_name}: client not connected")
-        return False
+        ok = await start_client(session_name)
+        if not ok:
+            return False
+        app = _clients.get(session_name)
+        if not app:
+            return False
 
     if _is_invite_link(chat_id):
         try:
@@ -208,15 +207,14 @@ async def join_chat(session_name: str, chat_id) -> bool:
         return False
 
 async def join_vc(session_name: str, chat_id: int, retry: int = 0) -> bool:
-    app = vcmanager._clients.get(session_name) if hasattr(vcmanager, "_clients") else None
-    if app is None:
-        try:
-            app = _clients.get(session_name)
-        except Exception:
-            app = None
+    app = _clients.get(session_name)
     if app is None or not getattr(app, "is_connected", False):
-        print(f"[join_vc] {session_name}: client not connected")
-        return False
+        ok = await start_client(session_name)
+        if not ok:
+            return False
+        app = _clients.get(session_name)
+        if not app:
+            return False
 
     if _is_invite_link(chat_id):
         ok = await join_chat(session_name, chat_id)
@@ -226,24 +224,14 @@ async def join_vc(session_name: str, chat_id: int, retry: int = 0) -> bool:
             chat = await app.get_chat(chat_id.strip())
             chat_id = chat.id
         except Exception as e:
-            print(f"[join_vc] {session_name}: resolve after join failed: {e}")
+            print(f"[join_vc] {session_name}: resolve failed: {e}")
             return False
 
-    if _is_invite_link(chat_id):
-        # pehle join karo, phir VC join karo
-        ok = await join_chat(session_name, chat_id)
-        if not ok:
-            return False
-        # joined chat ka real ID nikaalo
-        try:
-            chat = await app.get_chat(chat_id.strip())
-            chat_id = chat.id
-        except Exception:
-            return False
     if isinstance(chat_id, str) and chat_id.lstrip("-").isdigit():
         chat_id = int(chat_id)
     if isinstance(chat_id, int) and chat_id > 0:
         chat_id = int(f"-100{chat_id}")
+
     call = _tgcalls.get(session_name)
     if call is None:
         ok = await start_client(session_name)
