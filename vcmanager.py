@@ -150,6 +150,10 @@ async def _resolve_chat_id(session_name: str, target) -> Optional[int]:
 
 
 async def join_chat(session_name: str, chat_id) -> bool:
+    if isinstance(chat_id, str) and chat_id.lstrip("-").isdigit():
+        chat_id = int(chat_id)
+    if isinstance(chat_id, int) and chat_id > 0:
+        chat_id = int(f"-100{chat_id}")
     app = _clients.get(session_name)
     if not app or not app.is_connected:
         ok = await start_client(session_name)
@@ -180,6 +184,10 @@ async def join_chat(session_name: str, chat_id) -> bool:
 
 
 async def join_vc(session_name: str, chat_id: int, retry: int = 0) -> bool:
+    if isinstance(chat_id, str) and chat_id.lstrip("-").isdigit():
+        chat_id = int(chat_id)
+    if isinstance(chat_id, int) and chat_id > 0:
+        chat_id = int(f"-100{chat_id}")
     call = _tgcalls.get(session_name)
     if call is None:
         ok = await start_client(session_name)
