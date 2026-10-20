@@ -35,7 +35,7 @@ owner_filter = filters.create(
 
 
 async def is_allowed_user(user_id: int) -> bool:
-    return user_id in OWNER_IDS or await db.is_allowed(user_id)
+    return True
 
 
 def main_menu():
@@ -43,6 +43,7 @@ def main_menu():
         [
             ["➕ Add String", "➕ Add Login"],
             ["📋 Accounts", "🎯 Targets"],
+            ["➕ Add Target GC"],
             ["▶️ Start All VC", "⏹️ Stop All VC"],
             ["🤖 Auto Join: ON", "🎯 Control Account"],
             ["📊 Status", "📚 Tutorial", "👤 Users"],
@@ -56,6 +57,7 @@ def main_menu_off():
         [
             ["➕ Add String", "➕ Add Login"],
             ["📋 Accounts", "🎯 Targets"],
+            ["➕ Add Target GC"],
             ["▶️ Start All VC", "⏹️ Stop All VC"],
             ["🤖 Auto Join: OFF", "🎯 Control Account"],
             ["📊 Status", "📚 Tutorial", "👤 Users"],
@@ -68,7 +70,8 @@ def acct_kb(sessions: list):
     rows = []
     for s in sessions:
         name = s.get("session_name", str(s)) if isinstance(s, dict) else str(s)
-        rows.append([InlineKeyboardButton(f"👤 {name}", callback_data=f"acct:{name}")])
+        rows.append([InlineKeyboardButton(f"🆔 {name}", callback_data=f"acct:{name}")])
+    rows.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="back_menu")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -76,14 +79,14 @@ def acct_action_kb(name: str):
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("▶️ Join VC", callback_data=f"ajoin:{name}"),
-                InlineKeyboardButton("⏹️ Leave VC", callback_data=f"aleave:{name}"),
+                InlineKeyboardButton("🟢 Join VC", callback_data=f"ajoin:{name}"),
+                InlineKeyboardButton("🔴 Leave VC", callback_data=f"aleave:{name}"),
             ],
             [
-                InlineKeyboardButton("🔄 Restart", callback_data=f"arestart:{name}"),
-                InlineKeyboardButton("🗑 Delete", callback_data=f"adelete:{name}"),
+                InlineKeyboardButton("🟡 Restart", callback_data=f"arestart:{name}"),
+                InlineKeyboardButton("⚫ Delete", callback_data=f"adelete:{name}"),
             ],
-            [InlineKeyboardButton("⬅️ Back", callback_data="back_acct")],
+            [InlineKeyboardButton("🔵 Back", callback_data="back_acct")],
         ]
     )
 
@@ -95,6 +98,7 @@ def target_kb(targets: list):
         rows.append(
             [InlineKeyboardButton(f"🎯 {title}", callback_data=f"tdel:{t.get('chat_id')}")]
         )
+    rows.append([InlineKeyboardButton("🔵 Back", callback_data="back_menu")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -103,20 +107,14 @@ async def start_cmd(_, m: Message):
     if not m.from_user:
         return
     uid = m.from_user.id
-    allowed = await is_allowed_user(uid)
     if uid in OWNER_IDS:
         role = "🛡️ **Owner**"
-    elif allowed:
-        role = "✅ **Authorized User**"
     else:
-        await m.reply(
-            "🚫 You are **not authorized** to use this bot.\nContact the owner.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return
+        role = "👤 **User**"
+    await db.add_user(uid)
     await m.reply(
         f"**VC Joiner Bot**\n\n"
-        f"Welcome back! Role: {role}\n\n"
+        f"Welcome! Role: {role}\n\n"
         f"• Add accounts via string or login\n"
         f"• Add target groups/channels\n"
         f"• Start VC join — accounts sit muted\n"
@@ -137,13 +135,14 @@ async def _help_text(m: Message):
     await m.reply(
         "**VC Joiner — Commands**\n\n"
         "/start — Open menu\n"
-        "/adduser <id> — Add authorized user (owner)\n"
-        "/deluser <id> — Remove user (owner)\n"
-        "/delacc <name> — Delete an account\n"
-        "/deltarget <id> — Delete a target\n"
         "/status — Bot health & stats\n"
         "/health — Same as status\n"
         "/help — This message\n\n"
+        "**Owner commands:**\n"
+        "/adduser <id> — Add authorized user\n"
+        "/deluser <id> — Remove user\n"
+        "/delacc <name> — Delete an account\n"
+        "/deltarget <id> — Delete a target\n\n"
         "**Menu buttons** let you do everything without commands."
     )
 
@@ -175,7 +174,7 @@ async def _status_text(m: Message):
         f"**Accounts active:** {len(active)}\n"
         f"**Dead sessions:** {len(dead)}\n"
         f"**Targets:** {len(targets)}\n"
-        f"**Authorized users:** {len(users)}\n"
+        f"**Total users:** {len(users)}\n"
         f"**Auto-rejoin:** {auto}\n\n"
     )
     if active:
@@ -299,7 +298,7 @@ async def menu_router(client: Client, m: Message):
             f"🤖 Auto-rejoin is now **{'ON ✅' if new_state else 'OFF ❌'}**.\n"
             + ("If a voice chat ends, accounts will automatically rejoin when a new call starts."
                if new_state else "Accounts will no longer auto-rejoin."),
-            reply_markup=main_menu() if not new_state else main_menu_off(),
+            reply_markup=main_menu_off() if new_state else main_menu(),
         )
 
     elif text == "🎯 Control Account":
@@ -542,7 +541,11 @@ async def callback_handler(client: Client, cq):
             await cq.message.edit_text("No accounts.")
             await cq.answer()
             return
-        await cq.message.edit_text("Pick an account:", reply_markup=acct_kb(sessions))
+        await cq.message.edit_text("**🆔 Pick an account to control:**", reply_markup=acct_kb(sessions))
+        await cq.answer()
+
+    elif data == "back_menu":
+        await cq.message.delete()
         await cq.answer()
 
     elif data.startswith("tdel:"):
@@ -575,8 +578,8 @@ async def _tutorial(m: Message):
         "Toggle **🤖 Auto Join** ON. If a call ends and a new one starts, accounts rejoin automatically.\n\n"
         "**Step 5 — Control a single account**\n"
         "Tap **🎯 Control Account**, pick one, then join/leave/restart/delete it.\n\n"
-        "**Step 6 — Add users (owner)**\n"
-        "Use `/adduser <id>` to let someone else use the bot.\n\n"
+        "**Step 6 — Owner tools**\n"
+        "Owner can use `/adduser`, `/deluser`, `/delacc`, `/deltarget`.\n\n"
         "**Tips**\n"
         "• `/status` shows health and counts.\n"
         "• String sessions are easiest for hosting.\n"

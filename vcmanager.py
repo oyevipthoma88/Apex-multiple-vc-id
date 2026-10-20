@@ -11,9 +11,9 @@ from pyrogram.errors import (
 )
 from pytgcalls import PyTgCalls
 from pytgcalls.exceptions import (
-    GroupCallNotFound,
-    NotInGroupCallError,
     NoActiveGroupCall,
+    NotInCallError,
+    PyTgCallsAlreadyRunning,
 )
 from config import API_ID, API_HASH, SESSIONS_DIR
 
@@ -40,7 +40,7 @@ def make_client(session_name: str, session_string: str = "") -> Client:
             api_id=API_ID,
             api_hash=API_HASH,
             session_string=session_string,
-            no_updates=True,
+            no_updates=False,
         )
     else:
         app = Client(
@@ -48,15 +48,14 @@ def make_client(session_name: str, session_string: str = "") -> Client:
             api_id=API_ID,
             api_hash=API_HASH,
             workdir=SESSIONS_DIR,
-            no_updates=True,
             in_memory=False,
+            no_updates=False,
         )
     _clients[session_name] = app
     return app
 
 
 async def _with_flood_wait(func, *args, **kwargs):
-    """Call func(*args, **kwargs); sleep through FloodWait and retry once."""
     try:
         return await func(*args, **kwargs)
     except FloodWait as e:
@@ -98,6 +97,8 @@ async def start_client(session_name: str, session_string: str = "") -> bool:
             if session_name not in _started_tgcalls:
                 try:
                     await call.start()
+                except PyTgCallsAlreadyRunning:
+                    pass
                 except Exception as e:
                     msg = str(e).lower()
                     if "already" not in msg and "started" not in msg:
@@ -188,17 +189,22 @@ async def join_vc(session_name: str, chat_id: int, retry: int = 0) -> bool:
         if call is None:
             return False
     try:
-        call.join_group_call(chat_id, None, mute=True)
+        await call.play(chat_id, None)
+        await call.mute(chat_id)
         _joined.setdefault(session_name, set()).add(chat_id)
         return True
     except NoActiveGroupCall:
         return False
-    except GroupCallNotFound:
+    except NotInCallError:
         return False
     except Exception as e:
         msg = str(e).lower()
         if "already" in msg:
             _joined.setdefault(session_name, set()).add(chat_id)
+            try:
+                await call.mute(chat_id)
+            except Exception:
+                pass
             return True
         if retry < _MAX_RETRIES and ("network" in msg or "timeout" in msg):
             await asyncio.sleep(2)
@@ -211,8 +217,8 @@ async def leave_vc(session_name: str, chat_id: int) -> bool:
     call = _tgcalls.get(session_name)
     if call:
         try:
-            call.leave_group_call(chat_id)
-        except (NotInGroupCallError, GroupCallNotFound):
+            await call.leave_call(chat_id)
+        except (NotInCallError, NoActiveGroupCall):
             pass
         except Exception:
             pass
@@ -250,10 +256,8 @@ async def is_in_call(session_name: str, chat_id: int) -> bool:
     if call is None:
         return False
     try:
-        call.get_call(chat_id)
-        return True
-    except (NoActiveGroupCall, GroupCallNotFound):
-        return chat_id in _joined.get(session_name, set())
+        calls = await call.calls
+        return chat_id in calls
     except Exception:
         return chat_id in _joined.get(session_name, set())
 

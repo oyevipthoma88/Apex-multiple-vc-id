@@ -9,7 +9,7 @@ A clean, professional Telegram bot that joins voice chats in your target groups,
 - **Multiple account login** — add accounts via **String Session** or **phone + OTP + 2FA** login flow. Sessions are stored in MongoDB so they survive restarts on ephemeral filesystems (Render/Heroku).
 - **Unlimited target chats** — add any group/channel (public, private, or by chat ID) by link or ID.
 - **Voice-chat joiner** — one tap to sit all accounts in target voice chats (muted).
-- **Owner + authorized users** — only the owner and explicitly-added users can use the bot.
+- **Owner + authorized users** — the bot is open to **all Telegram users**. Owner-only commands (`/adduser`, `/deluser`, `/delacc`, `/deltarget`) remain restricted to owners.
 - **MongoDB persistence** — sessions, targets, and users are saved across restarts.
 - **Web keep-alive** — built-in Flask server keeps free-tier hosting awake.
 - **Auto-rejoin** — if a voice chat ends and a new one starts, accounts rejoin automatically.
@@ -85,12 +85,12 @@ The `Aptfile` ensures ffmpeg and libopus are installed on Heroku's Cedar stack.
 | Command                    | Who    | Purpose                          |
 |----------------------------|--------|----------------------------------|
 | `/start`                   | All    | Open the menu                    |
+| `/status`                  | All    | Show accounts/targets counts     |
+| `/help`                    | All    | Command list                     |
 | `/adduser <id>`            | Owner  | Authorize a user                 |
 | `/deluser <id>`            | Owner  | Remove a user                    |
 | `/delacc <name>`           | Owner  | Remove a saved account           |
 | `/deltarget <id>`          | Owner  | Remove a target chat             |
-| `/status`                  | Owner  | Show accounts/targets counts     |
-| `/help`                    | Owner  | Command list                     |
 
 Menu buttons: **Add Account (String)**, **Add Account (Login)**, **My Accounts**, **Add Target GC**, **Target List**, **Start VC Join**, **Stop VC Join**, **Manage Users**.
 
