@@ -35,11 +35,23 @@ class TelegramLogHandler(logging.Handler):
         self.client = client
         self.chat_id = chat_id
 
+    _last_ts = {}
+
     def emit(self, record):
         try:
+            import time
+            now = time.time()
+            key = (record.levelname, record.getMessage()[:60])
+            if now - self._last_ts.get(key, 0) < 3:
+                return  # rate-limit identical logs to 1 per 3s
+            self._last_ts[key] = now
+            if len(self._last_ts) > 200:
+                self._last_ts.clear()
             msg = self.format(record)
-            # Fire-and-forget: schedule send_message on the running loop
-            loop = asyncio.get_event_loop()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
             if loop.is_running():
                 loop.create_task(self._send(msg))
         except Exception:

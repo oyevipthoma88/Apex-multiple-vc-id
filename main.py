@@ -1,70 +1,60 @@
 import asyncio
-import sys
-
-from config import BOT_TOKEN, API_ID, API_HASH, OWNER_IDS, PORT
-from database import init_db
-import threading
-from web import start_in_thread
-from handlers import setup_telegram_logging, bot
-import vcmanager
-import database as db
-from pyrogram import Client
 import os
+import threading
+
+# CRITICAL: create loop FIRST, set as default, THEN import handlers
+# so that `bot = Client(...)` in handlers.py binds to THIS loop
+_loop = asyncio.new_event_loop()
+asyncio.set_event_loop(_loop)
+
+from pyrogram import idle
+from handlers import bot, setup_telegram_logging
+
+LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL_ID", "0"))
+PORT = int(os.environ.get("PORT", 8080))
 
 
-def _check_env():
-    missing = []
-    if not API_ID or not API_HASH:
-        missing.append("API_ID / API_HASH")
-    if not BOT_TOKEN:
-        missing.append("BOT_TOKEN")
-    if not OWNER_IDS or OWNER_IDS == [0]:
-        missing.append("OWNER_IDS")
-    if missing:
-        print("Missing env vars: " + ", ".join(missing))
-        print("Set them in your hosting dashboard or .env file.")
-        sys.exit(1)
-
-
-def run_flask():
+def _run_flask():
     from web import app
-    app.run(host="0.0.0.0", port=8080)
+    # use_reloader=False is CRITICAL — otherwise Flask spawns 2nd process
+    app.run(host="0.0.0.0", port=PORT, use_reloader=False, threaded=True)
 
 
 async def main():
-    from handlers import bot  # use the client that already has all handlers
+    # 1) Flask keep-alive in background thread
+    threading.Thread(target=_run_flask, daemon=True).start()
+    print("Web keep-alive running on port", PORT, flush=True)
 
-    _check_env()
-    await init_db()
-    print("Database initialized.")
-    start_in_thread(PORT)
-    print(f"Web keep-alive running on port {PORT}.")
-    print("Starting Telegram bot...")
-    # # threading.Thread(target=run_flask, daemon=True).start()
+    # 2) Start bot (handlers already registered on this client)
     await bot.start()
+    print("Starting Telegram bot...", flush=True)
 
-    LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL_ID", "0"))
-
+    # 3) Attach log channel
     if LOG_CHANNEL_ID:
         setup_telegram_logging(bot, LOG_CHANNEL_ID)
-        print(f"[main] Deep logging -> {LOG_CHANNEL_ID}")
+        print(f"[main] Deep logging -> {LOG_CHANNEL_ID}", flush=True)
 
-    sessions = await db.list_sessions()
-    for s in sessions:
-        sname = s["session_name"] if isinstance(s, dict) else s
-        sstr = s.get("session_string", "") if isinstance(s, dict) else ""
-        ok = await vcmanager.start_client(sname, sstr)
-        print(f"  restored {sname}: {'ok' if ok else 'failed'}")
-    await vcmanager.start_rejoin_loop()
-    print(f"Bot is running. {len(sessions)} accounts loaded. Press Ctrl+C to stop.")
+    # 4) Restore accounts + start auto-rejoin
     try:
-        await asyncio.Event().wait()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    finally:
-        await vcmanager.stop_all()
-        await bot.stop()
+        from vcmanager import vcmanager
+        await vcmanager.restore_all()
+        print("Bot is running. Press Ctrl+C to stop.", flush=True)
+        print("[auto-rejoin] loop started", flush=True)
+    except Exception as e:
+        print(f"[main] restore warning: {e}", flush=True)
+
+    # 5) Keep alive
+    await idle()
+    await bot.stop()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        _loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            _loop.close()
+        except Exception:
+            pass
