@@ -78,6 +78,12 @@ def main_menu_off():
     )
 
 
+def _normalize_chat_id(chat_id):
+    """Auto-prepend -100 for positive group/channel IDs."""
+    if isinstance(chat_id, int) and chat_id > 0:
+        return int(f"-100{chat_id}")
+    return chat_id
+
 def _btn(text, **kwargs):
     try:
         return InlineKeyboardButton(text, **kwargs)
