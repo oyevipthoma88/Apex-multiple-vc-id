@@ -223,7 +223,6 @@ async def _status_text(m: Message):
     await m.reply(text)
 
 
-@bot.on_message(filters.private & filters.text, group=1)
 async def _cleanup_login(uid=None, *args, **kwargs):
     if not isinstance(uid, int):
         for a in args:
@@ -245,6 +244,7 @@ async def _cleanup_login(uid=None, *args, **kwargs):
     conv.pop(uid, None)
     acct_select.pop(uid, None)
 
+@bot.on_message(filters.private & filters.text, group=1)
 async def menu_router(client: Client, m: Message):
     if not m.from_user:
         return
