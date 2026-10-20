@@ -91,6 +91,18 @@ def _normalize_chat_id(chat_id):
     return chat_id
 
 def _btn(text, **kwargs):
+    """Safely create InlineKeyboardButton with ButtonStyle enum + emoji."""
+    if "style" in kwargs and isinstance(kwargs["style"], str):
+        try:
+            from pyrogram.enums import ButtonStyle
+            kwargs["style"] = getattr(ButtonStyle, kwargs["style"].upper())
+        except (ImportError, AttributeError):
+            kwargs.pop("style", None)
+    if "icon_custom_emoji_id" in kwargs and kwargs["icon_custom_emoji_id"] is not None:
+        try:
+            kwargs["icon_custom_emoji_id"] = int(kwargs["icon_custom_emoji_id"])
+        except (TypeError, ValueError):
+            kwargs.pop("icon_custom_emoji_id", None)
     try:
         return InlineKeyboardButton(text, **kwargs)
     except (TypeError, ValueError):
