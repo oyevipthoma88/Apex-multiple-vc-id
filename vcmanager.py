@@ -161,48 +161,74 @@ def _is_invite_link(chat_id):
 
 
 async def join_chat(session_name: str, chat_id) -> bool:
+    app = vcmanager._clients.get(session_name) if hasattr(vcmanager, "_clients") else None
+    if app is None:
+        try:
+            app = _clients.get(session_name)
+        except Exception:
+            app = None
+    if app is None or not getattr(app, "is_connected", False):
+        print(f"[join_chat] {session_name}: client not connected")
+        return False
+
     if _is_invite_link(chat_id):
         try:
             await app.join_chat(chat_id.strip())
-            print(f"[join_chat] {session_name}: joined invite link")
+            print(f"[join_chat] {session_name}: joined invite link {chat_id[:40]}")
             return True
         except Exception as e:
+            es = str(e).upper()
+            if "FLOOD" in es or "USER_ALREADY" in es or "INVITE_REQUEST_SENT" in es:
+                print(f"[join_chat] {session_name}: {e}")
+                return True
             print(f"[join_chat] {session_name}: invite link failed: {e}")
             return False
-    if isinstance(chat_id, str) and chat_id.lstrip("-").isdigit():
-        chat_id = int(chat_id)
+
+    if isinstance(chat_id, str):
+        c = chat_id.strip()
+        if c.lstrip("-").isdigit():
+            chat_id = int(c)
+        elif c.startswith("@"):
+            chat_id = c[1:]
+        else:
+            chat_id = c
+
     if isinstance(chat_id, int) and chat_id > 0:
         chat_id = int(f"-100{chat_id}")
-    app = _clients.get(session_name)
-    if not app or not app.is_connected:
-        ok = await start_client(session_name)
-        if not ok:
-            return False
-        app = _clients[session_name]
+
     try:
-        await _with_flood_wait(app.get_chat, chat_id)
-        return True
-    except (UserDeactivated, AuthKeyUnregistered):
-        _dead.add(session_name)
-        return False
-    except Exception:
-        pass
-    try:
-        await _with_flood_wait(app.join_chat, str(chat_id))
-        return True
-    except UserNotParticipant:
-        return True
-    except ChannelPrivate:
+        await app.join_chat(chat_id)
+        print(f"[join_chat] {session_name}: joined {chat_id}")
         return True
     except Exception as e:
-        msg = str(e).lower()
-        if "already" in msg or "channelprivate" in msg:
+        es = str(e).upper()
+        if "USER_ALREADY" in es or "INVITE_REQUEST_SENT" in es:
             return True
         print(f"[join_chat] {session_name}: {e}")
         return False
 
-
 async def join_vc(session_name: str, chat_id: int, retry: int = 0) -> bool:
+    app = vcmanager._clients.get(session_name) if hasattr(vcmanager, "_clients") else None
+    if app is None:
+        try:
+            app = _clients.get(session_name)
+        except Exception:
+            app = None
+    if app is None or not getattr(app, "is_connected", False):
+        print(f"[join_vc] {session_name}: client not connected")
+        return False
+
+    if _is_invite_link(chat_id):
+        ok = await join_chat(session_name, chat_id)
+        if not ok:
+            return False
+        try:
+            chat = await app.get_chat(chat_id.strip())
+            chat_id = chat.id
+        except Exception as e:
+            print(f"[join_vc] {session_name}: resolve after join failed: {e}")
+            return False
+
     if _is_invite_link(chat_id):
         # pehle join karo, phir VC join karo
         ok = await join_chat(session_name, chat_id)

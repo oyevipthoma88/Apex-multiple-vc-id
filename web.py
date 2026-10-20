@@ -51,7 +51,7 @@ def health():
 
 
 def run_web(port: int):
-    app.run(host="0.0.0.0", port=port)
+    app.run(use_reloader=False, threaded=True, debug=False, host="0.0.0.0", port=port)
 
 
 def start_in_thread(port: int):
