@@ -32,8 +32,7 @@ def run_flask():
 
 
 async def main():
-    from config import API_ID, API_HASH, BOT_TOKEN
-    bot = Client("apex_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+    from handlers import bot  # use the client that already has all handlers
 
     _check_env()
     await init_db()
