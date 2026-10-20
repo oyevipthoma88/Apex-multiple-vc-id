@@ -3,6 +3,7 @@ import sys
 
 from config import BOT_TOKEN, API_ID, API_HASH, OWNER_IDS, PORT
 from database import init_db
+import threading
 from web import start_in_thread
 from handlers import bot
 import vcmanager
@@ -23,13 +24,22 @@ def _check_env():
         sys.exit(1)
 
 
+def run_flask():
+    from web import app
+    app.run(host="0.0.0.0", port=8080)
+
+
 async def main():
+    from config import API_ID, API_HASH, BOT_TOKEN
+    bot = Client("apex_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
     _check_env()
     await init_db()
     print("Database initialized.")
     start_in_thread(PORT)
     print(f"Web keep-alive running on port {PORT}.")
     print("Starting Telegram bot...")
+    threading.Thread(target=run_flask, daemon=True).start()
     await bot.start()
     sessions = await db.list_sessions()
     for s in sessions:
