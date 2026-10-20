@@ -224,7 +224,17 @@ async def _status_text(m: Message):
 
 
 @bot.on_message(filters.private & filters.text, group=1)
-async def _cleanup_login(uid: int):
+async def _cleanup_login(uid=None, *args, **kwargs):
+    if not isinstance(uid, int):
+        for a in args:
+            fu = getattr(a, "from_user", None)
+            if fu and getattr(fu, "id", None):
+                uid = fu.id
+                break
+        if not isinstance(uid, int) and hasattr(uid, "from_user") and uid.from_user:
+            uid = uid.from_user.id
+    if not isinstance(uid, int):
+        return
     st = phone_state.get(uid)
     if st and st.get("app"):
         try:
