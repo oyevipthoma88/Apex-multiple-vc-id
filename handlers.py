@@ -24,6 +24,44 @@ from config import API_ID, API_HASH, BOT_TOKEN, OWNER_IDS, SESSIONS_DIR, SUPPORT
 import database as db
 import vcmanager
 
+
+import logging
+import asyncio
+
+class TelegramLogHandler(logging.Handler):
+    """Send all log records to a Telegram channel."""
+    def __init__(self, client, chat_id):
+        super().__init__()
+        self.client = client
+        self.chat_id = chat_id
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # Fire-and-forget: schedule send_message on the running loop
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(self._send(msg))
+        except Exception:
+            self.handleError(record)
+
+    async def _send(self, msg):
+        try:
+            await self.client.send_message(self.chat_id, f"`{msg}`")
+        except Exception:
+            pass
+
+
+def setup_telegram_logging(client, chat_id, level=logging.INFO):
+    """Attach TelegramLogHandler to root logger."""
+    handler = TelegramLogHandler(client, chat_id)
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logging.getLogger().addHandler(handler)
+    logging.getLogger().setLevel(level)
+    print(f"[logging] Telegram log handler attached -> {chat_id}")
+
+
+
 bot = Client(
     "vcjoiner_bot",
     api_id=API_ID,
