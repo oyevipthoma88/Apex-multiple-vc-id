@@ -534,6 +534,92 @@ async def callback_handler(client: Client, cq):
         return
     data = cq.data
 
+    # ── Inline menu callbacks ──
+    if data == "m:add_string":
+        conv[uid] = "await_string"
+        await cq.message.edit_text("🔗 Send your **Pyrogram string session**.")
+        await cq.answer()
+        return
+    if data == "m:add_login":
+        conv[uid] = "await_phone"
+        await cq.message.edit_text("📱 Send your **phone number** with country code (e.g. +91...).")
+        await cq.answer()
+        return
+    if data == "m:add_target":
+        conv[uid] = "await_target"
+        await cq.message.edit_text(
+            "🎯 Send the **target link or chat ID**.\n\n"
+            "Examples:\n`https://t.me/xxxxx`\n`-1001234567890`\n\n"
+            "⚠️ Account ko pehle us channel me join hona chahiye."
+        )
+        await cq.answer()
+        return
+    if data == "m:start_all":
+        sessions = await db.list_sessions()
+        targets = await db.list_targets()
+        if not sessions or not targets:
+            await cq.answer("Add account + target first.", show_alert=True)
+            return
+        await cq.answer("Starting...")
+        await cq.message.edit_text("⏳ Joining all targets...")
+        total = 0
+        failed = []
+        for i, sess in enumerate(sessions, 1):
+            sname = sess["session_name"] if isinstance(sess, dict) else sess
+            sstr = sess.get("session_string", "") if isinstance(sess, dict) else ""
+            await vcmanager.start_client(sname, sstr)
+            res = await vcmanager.join_all_targets(sname, targets)
+            ok = sum(1 for v in res.values() if v)
+            total += ok
+            if ok < len(targets):
+                failed.append(sname)
+        await cq.message.edit_text(
+            f"✅ Joined **{total}** VCs.\n"
+            + (f"⚠️ Failed: {', '.join(failed)}" if failed else ""),
+            reply_markup=main_menu(),
+        )
+        return
+    if data == "m:stop_all":
+        await vcmanager.stop_all()
+        await cq.message.edit_text("⏹️ All accounts stopped.", reply_markup=main_menu())
+        await cq.answer()
+        return
+    if data == "m:toggle_auto":
+        cur = vcmanager.auto_rejoin_enabled()
+        await vcmanager.set_auto_rejoin(not cur)
+        new_state = not cur
+        await cq.message.edit_text(
+            f"🤖 Auto-rejoin: **{'ON ✅' if new_state else 'OFF ❌'}**",
+            reply_markup=main_menu() if new_state else main_menu_off(),
+        )
+        await cq.answer()
+        return
+    if data == "m:control":
+        sessions = await db.list_sessions()
+        if not sessions:
+            await cq.answer("No accounts.", show_alert=True)
+            return
+        await cq.message.edit_text("Pick an account:", reply_markup=acct_kb(sessions))
+        await cq.answer()
+        return
+    if data == "m:status":
+        await cq.answer()
+        await _status_text(cq.message)
+        return
+    if data == "m:tutorial":
+        await cq.answer()
+        await _tutorial(cq.message)
+        return
+    if data == "m:users":
+        await cq.answer()
+        users = await db.list_users()
+        await cq.message.edit_text(
+            "**Authorized Users:**\n"
+            + ("\n".join(f"• `{u}`" for u in users) if users else "None added."),
+            reply_markup=main_menu(),
+        )
+        return
+
     if data.startswith("acct:"):
         name = data.split(":", 1)[1]
         acct_select[uid] = name
